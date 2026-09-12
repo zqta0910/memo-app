@@ -20,11 +20,21 @@ function preview(body: string) {
   return text.length > 80 ? `${text.slice(0, 80)}…` : text;
 }
 
+function sortMemos(memos: Memo[]) {
+  return [...memos].sort((a, b) => {
+    if (a.important !== b.important) {
+      return Number(b.important) - Number(a.important);
+    }
+    return Date.parse(b.updated_at) - Date.parse(a.updated_at);
+  });
+}
+
 export default function MemoApp() {
   const [memos, setMemos] = useState<Memo[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
+  const [important, setImportant] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -34,12 +44,15 @@ export default function MemoApp() {
     [memos, selectedId],
   );
   const isDirty =
-    (selectedMemo?.title ?? "") !== title || (selectedMemo?.body ?? "") !== body;
+    (selectedMemo?.title ?? "") !== title ||
+    (selectedMemo?.body ?? "") !== body ||
+    (selectedMemo?.important ?? false) !== important;
 
   const resetForm = useCallback((memo?: Memo | null) => {
     setSelectedId(memo?.id ?? null);
     setTitle(memo?.title ?? "");
     setBody(memo?.body ?? "");
+    setImportant(memo?.important ?? false);
     setError(null);
   }, []);
 
@@ -56,6 +69,7 @@ export default function MemoApp() {
       const { data, error: fetchError } = await getSupabase()
         .from("memos")
         .select("*")
+        .order("important", { ascending: false })
         .order("updated_at", { ascending: false });
 
       if (fetchError) {
@@ -64,7 +78,7 @@ export default function MemoApp() {
         return;
       }
 
-      setMemos((data ?? []) as Memo[]);
+      setMemos(sortMemos((data ?? []) as Memo[]));
     } catch (caught) {
       setError(
         caught instanceof Error
@@ -106,45 +120,52 @@ export default function MemoApp() {
     setSaving(true);
     setError(null);
 
-    const supabase = getSupabase();
+    try {
+      const supabase = getSupabase();
+      const payload = { title: nextTitle, body: nextBody, important };
 
-    if (selectedId) {
-      const { data, error: updateError } = await supabase
-        .from("memos")
-        .update({ title: nextTitle, body: nextBody })
-        .eq("id", selectedId)
-        .select()
-        .single();
+      if (selectedId) {
+        const { data, error: updateError } = await supabase
+          .from("memos")
+          .update(payload)
+          .eq("id", selectedId)
+          .select()
+          .single();
 
-      if (updateError) {
-        setError(updateError.message);
-        setSaving(false);
-        return;
+        if (updateError) {
+          setError(updateError.message);
+          setSaving(false);
+          return;
+        }
+
+        const updated = data as Memo;
+        setMemos((current) =>
+          sortMemos([updated, ...current.filter((memo) => memo.id !== updated.id)]),
+        );
+        resetForm(updated);
+      } else {
+        const { data, error: insertError } = await supabase
+          .from("memos")
+          .insert(payload)
+          .select()
+          .single();
+
+        if (insertError) {
+          setError(insertError.message);
+          setSaving(false);
+          return;
+        }
+
+        const created = data as Memo;
+        setMemos((current) => sortMemos([created, ...current]));
+        resetForm(created);
       }
-
-      const updated = data as Memo;
-      setMemos((current) =>
-        [updated, ...current.filter((memo) => memo.id !== updated.id)].sort(
-          (a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at),
-        ),
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "保存に失敗しました。",
       );
-      resetForm(updated);
-    } else {
-      const { data, error: insertError } = await supabase
-        .from("memos")
-        .insert({ title: nextTitle, body: nextBody })
-        .select()
-        .single();
-
-      if (insertError) {
-        setError(insertError.message);
-        setSaving(false);
-        return;
-      }
-
-      const created = data as Memo;
-      setMemos((current) => [created, ...current]);
-      resetForm(created);
     }
 
     setSaving(false);
@@ -223,15 +244,26 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key`}
                     className={`w-full rounded-xl border px-3 py-3 text-left transition ${
                       active
                         ? "border-zinc-900 bg-zinc-900 text-white"
-                        : "border-zinc-200 bg-zinc-50 hover:border-zinc-300 hover:bg-white"
+                        : memo.important
+                          ? "border-amber-300 bg-amber-50 hover:border-amber-400 hover:bg-amber-100"
+                          : "border-zinc-200 bg-zinc-50 hover:border-zinc-300 hover:bg-white"
                     }`}
                   >
-                    <p className="truncate font-medium">
-                      {memo.title || "無題のメモ"}
+                    <p className="flex items-center gap-1.5 truncate font-medium">
+                      {memo.important ? (
+                        <span aria-label="重要" title="重要">
+                          ⭐️
+                        </span>
+                      ) : null}
+                      <span className="truncate">{memo.title || "無題のメモ"}</span>
                     </p>
                     <p
                       className={`mt-1 line-clamp-2 text-sm ${
-                        active ? "text-zinc-300" : "text-zinc-500"
+                        active
+                          ? "text-zinc-300"
+                          : memo.important
+                            ? "text-amber-900/70"
+                            : "text-zinc-500"
                       }`}
                     >
                       {preview(memo.body)}
@@ -252,10 +284,11 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key`}
       </aside>
 
       <section className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
-        <div className="mb-5 flex items-start justify-between gap-4">
+        <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h2 className="text-lg font-semibold">
+            <h2 className="flex items-center gap-2 text-lg font-semibold">
               {selectedId ? "メモを編集" : "新しいメモ"}
+              {important ? <span aria-hidden="true">⭐️</span> : null}
             </h2>
             {selectedMemo ? (
               <p className="mt-1 text-sm text-zinc-500">
@@ -267,22 +300,42 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key`}
               </p>
             )}
           </div>
-          {selectedId ? (
+          <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
-              onClick={() => void handleDelete()}
-              disabled={saving}
-              className="rounded-full border border-red-200 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50 disabled:opacity-50"
+              onClick={() => setImportant((current) => !current)}
+              aria-pressed={important}
+              className={`rounded-full border px-4 py-2 text-sm font-medium transition ${
+                important
+                  ? "border-amber-400 bg-amber-100 text-amber-950"
+                  : "border-amber-300 bg-amber-50 text-amber-950 hover:bg-amber-100"
+              }`}
             >
-              削除
+              {important ? "⭐️ 重要" : "⭐️ 重要にする"}
             </button>
-          ) : null}
+            {selectedId ? (
+              <button
+                type="button"
+                onClick={() => void handleDelete()}
+                disabled={saving}
+                className="rounded-full border border-red-200 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50 disabled:opacity-50"
+              >
+                削除
+              </button>
+            ) : null}
+          </div>
         </div>
 
         {error ? (
-          <p className="mb-4 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
-            {error}
-          </p>
+          <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+            <p>{error}</p>
+            {error.includes("important") ? (
+              <pre className="mt-3 overflow-x-auto rounded-lg bg-white p-3 text-xs text-zinc-800">
+{`alter table public.memos
+  add column if not exists important boolean not null default false;`}
+              </pre>
+            ) : null}
+          </div>
         ) : null}
 
         <form className="flex flex-col gap-4" onSubmit={(event) => void handleSubmit(event)}>
@@ -301,11 +354,11 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key`}
               value={body}
               onChange={(event) => setBody(event.target.value)}
               placeholder="メモの内容を書いてください"
-              rows={14}
-              className="min-h-64 resize-y rounded-xl border border-zinc-200 px-3 py-2 outline-none ring-zinc-900 focus:ring-2"
+              rows={10}
+              className="min-h-48 resize-y rounded-xl border border-zinc-200 px-3 py-2 outline-none ring-zinc-900 focus:ring-2"
             />
           </label>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <button
               type="submit"
               disabled={saving}

@@ -4,9 +4,13 @@ create table if not exists public.memos (
   id uuid primary key default gen_random_uuid(),
   title text not null default '',
   body text not null default '',
+  important boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table public.memos
+  add column if not exists important boolean not null default false;
 
 create or replace function public.set_updated_at()
 returns trigger
