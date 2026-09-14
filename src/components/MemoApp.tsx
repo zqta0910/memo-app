@@ -38,11 +38,24 @@ export default function MemoApp() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [importantOnly, setImportantOnly] = useState(false);
 
   const selectedMemo = useMemo(
     () => memos.find((memo) => memo.id === selectedId) ?? null,
     [memos, selectedId],
   );
+  const visibleMemos = useMemo(() => {
+    const keyword = searchQuery.trim().toLowerCase();
+    return memos.filter((memo) => {
+      if (importantOnly && !memo.important) return false;
+      if (!keyword) return true;
+      return (
+        memo.title.toLowerCase().includes(keyword) ||
+        memo.body.toLowerCase().includes(keyword)
+      );
+    });
+  }, [memos, searchQuery, importantOnly]);
   const isDirty =
     (selectedMemo?.title ?? "") !== title ||
     (selectedMemo?.body ?? "") !== body ||
@@ -226,15 +239,40 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key`}
           </button>
         </div>
 
+        <div className="mt-4 flex flex-col gap-2">
+          <input
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+            placeholder="タイトル・本文を検索"
+            className="rounded-xl border border-zinc-200 px-3 py-2 text-sm outline-none ring-zinc-900 focus:ring-2"
+          />
+          <button
+            type="button"
+            onClick={() => setImportantOnly((current) => !current)}
+            aria-pressed={importantOnly}
+            className={`self-start rounded-full border px-3 py-1 text-xs font-medium transition ${
+              importantOnly
+                ? "border-amber-400 bg-amber-100 text-amber-950"
+                : "border-zinc-200 bg-zinc-50 text-zinc-600 hover:bg-white"
+            }`}
+          >
+            ⭐️ 重要のみ表示
+          </button>
+        </div>
+
         {loading ? (
           <p className="mt-6 text-sm text-zinc-500">読み込み中...</p>
         ) : memos.length === 0 ? (
           <p className="mt-6 text-sm text-zinc-500">
             まだメモがありません。右のフォームから作成できます。
           </p>
+        ) : visibleMemos.length === 0 ? (
+          <p className="mt-6 text-sm text-zinc-500">
+            条件に一致するメモがありません。
+          </p>
         ) : (
           <ul className="mt-4 space-y-2">
-            {memos.map((memo) => {
+            {visibleMemos.map((memo) => {
               const active = memo.id === selectedId;
               return (
                 <li key={memo.id}>
